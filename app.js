@@ -26,21 +26,65 @@ class MagnifyAI {
 
     async loadModel() {
         try {
-            this.model = await cocoSsd.load();
-            console.log('YOLO model loaded');
+            // Load MediaPipe Object Detection model
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+            );
+            
+            this.objectDetector = await ObjectDetector.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float16/1/object_detector.tflite",
+                    delegate: "GPU"
+                },
+                runningMode: "IMAGE",
+                scoreThreshold: 0.9, // 90% threshold
+                maxResults: 10
+            });
+            
+            console.log('MediaPipe Object Detection model loaded');
         } catch (error) {
             console.error('Error loading model:', error);
+            // Fallback to COCO-SSD if MediaPipe fails
+            try {
+                this.model = await cocoSsd.load();
+                console.log('COCO-SSD fallback loaded');
+            } catch (fallbackError) {
+                console.error('Both models failed to load:', fallbackError);
+            }
         }
     }
 
     startDetection() {
-        if (!this.model) return;
-        
         const detect = async () => {
+            if (!this.objectDetector && !this.model) {
+                requestAnimationFrame(detect);
+                return;
+            }
+
             if (!this.isDetecting) {
                 this.isDetecting = true;
                 try {
-                    const predictions = await this.model.detect(this.video);
+                    let predictions = [];
+                    
+                    if (this.objectDetector) {
+                        // Use MediaPipe
+                        const results = await this.objectDetector.detect(this.video);
+                        predictions = results.detections.map(detection => ({
+                            bbox: [
+                                detection.boundingBox.originX,
+                                detection.boundingBox.originY,
+                                detection.boundingBox.width,
+                                detection.boundingBox.height
+                            ],
+                            class: detection.categories[0].categoryName,
+                            score: detection.categories[0].score
+                        }));
+                    } else {
+                        // Fallback to COCO-SSD
+                        const results = await this.model.detect(this.video);
+                        predictions = results.filter(r => r.score >= 0.9);
+                    }
+                    
                     this.detections = predictions;
                     this.drawDetections();
                 } catch (error) {
@@ -62,40 +106,8 @@ class MagnifyAI {
         canvas.width = this.video.videoWidth;
         canvas.height = this.video.videoHeight;
         
-        // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Flip canvas horizontally to match video
-        ctx.save();
-        ctx.scale(-1, 1);
-        ctx.translate(-canvas.width, 0);
-        
-        // Draw bounding boxes and labels - only for 90%+ confidence
-        this.detections.forEach(detection => {
-            if (detection.score < 0.9) return; // Skip if confidence < 90%
-            
-            const [x, y, width, height] = detection.bbox;
-            const label = `${detection.class} ${Math.round(detection.score * 100)}%`;
-            
-            // Draw box
-            ctx.strokeStyle = '#00ff88';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(x, y, width, height);
-            
-            // Draw label background
-            ctx.fillStyle = 'rgba(0, 255, 136, 0.8)';
-            const textMetrics = ctx.measureText(label);
-            ctx.fillRect(x, y - 30, textMetrics.width + 10, 25);
-            
-            // Draw text
-            ctx.fillStyle = '#000';
-            ctx.font = '16px Arial';
-            ctx.fillText(label, x + 5, y - 10);
-        });
-        
-        ctx.restore();
-        
-        // Update overlay canvas
         this.updateOverlay();
     }
 
