@@ -39,8 +39,13 @@ class MagnifyAI {
     }
 
     setupControls() {
-        document.getElementById('magnifyBtn').addEventListener('click', () => {
-            this.captureAndMagnify();
+        const zoomSlider = document.getElementById('zoomSlider');
+        const zoomLevelDisplay = document.getElementById('zoomLevel');
+        
+        zoomSlider.addEventListener('input', (e) => {
+            this.zoomLevel = parseFloat(e.target.value);
+            zoomLevelDisplay.textContent = `${this.zoomLevel.toFixed(1)}x`;
+            this.applyZoom();
         });
 
         document.getElementById('aiBtn').addEventListener('click', () => {
@@ -56,27 +61,14 @@ class MagnifyAI {
         });
     }
 
+    applyZoom() {
+        // Apply zoom using CSS transform
+        this.video.style.transform = `scaleX(-1) scale(${this.zoomLevel})`;
+    }
+
     setupGestures() {
-        let touchStartX = 0;
-        let touchStartY = 0;
-
-        this.video.addEventListener('touchstart', (e) => {
-            touchStartX = e.touches[0].clientX;
-            touchStartY = e.touches[0].clientY;
-        });
-
-        this.video.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            const touchX = e.touches[0].clientX;
-            const touchY = e.touches[0].clientY;
-            const deltaX = touchX - touchStartX;
-            const deltaY = touchY - touchStartY;
-
-            if (Math.abs(deltaX) > Math.abs(deltaY)) {
-                this.zoomLevel = Math.max(1, Math.min(10, this.zoomLevel + deltaX * 0.01));
-                document.getElementById('zoomLevel').textContent = `${this.zoomLevel.toFixed(1)}x`;
-            }
-        });
+        // Remove the old gesture controls since we have the slider now
+        // Keep the zoom level display updated
     }
 
     captureAndMagnify() {
@@ -186,4 +178,3 @@ window.addEventListener('orientationchange', () => {
         const app = new MagnifyAI();
     }, 500);
 });
-
