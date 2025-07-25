@@ -32,7 +32,7 @@ class MagnifyAI {
             document.querySelector('#loadingOverlay p').textContent = 'Loading AI Model...';
             document.getElementById('loadingOverlay').classList.remove('hidden');
 
-            this.detector = await pipeline('object-detection', 'Xenova/detr-resnet-50', {
+            this.detector = await pipeline('object-detection', 'Xenova/yolos-tiny', {
                 quantized: true, // Use a quantized model for better performance
                 progress_callback: (data) => {
                     if (data.status === 'progress') {
@@ -61,7 +61,7 @@ class MagnifyAI {
             this.isDetecting = true;
             try {
                 const predictions = await this.detector(this.video, {
-                    threshold: 0.8,
+                    threshold: 0.5,
                     percentage: true,
                 });
                 
