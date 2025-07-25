@@ -7,14 +7,152 @@ class MagnifyAI {
         this.magnifiedImage = document.getElementById('magnifiedImage');
         this.zoomLevel = 1;
         this.flashOn = false;
+        this.model = null;
+        this.detections = [];
+        this.isDetecting = false;
+        this.detectionCanvas = document.createElement('canvas');
+        this.detectionCtx = this.detectionCanvas.getContext('2d');
         
         this.init();
     }
 
     async init() {
         await this.setupCamera();
+        await this.loadModel();
         this.setupControls();
         this.setupGestures();
+        this.startDetection();
+    }
+
+    async loadModel() {
+        try {
+            this.model = await cocoSsd.load();
+            console.log('YOLO model loaded');
+        } catch (error) {
+            console.error('Error loading model:', error);
+        }
+    }
+
+    startDetection() {
+        if (!this.model) return;
+        
+        const detect = async () => {
+            if (!this.isDetecting) {
+                this.isDetecting = true;
+                try {
+                    const predictions = await this.model.detect(this.video);
+                    this.detections = predictions;
+                    this.drawDetections();
+                } catch (error) {
+                    console.error('Detection error:', error);
+                } finally {
+                    this.isDetecting = false;
+                }
+            }
+            requestAnimationFrame(detect);
+        };
+        
+        detect();
+    }
+
+    drawDetections() {
+        const canvas = this.detectionCanvas;
+        const ctx = this.detectionCtx;
+        
+        canvas.width = this.video.videoWidth;
+        canvas.height = this.video.videoHeight;
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Flip canvas horizontally to match video
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.translate(-canvas.width, 0);
+        
+        // Draw bounding boxes and labels
+        this.detections.forEach(detection => {
+            const [x, y, width, height] = detection.bbox;
+            const label = `${detection.class} ${Math.round(detection.score * 100)}%`;
+            
+            // Draw box
+            ctx.strokeStyle = '#00ff88';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Draw label background
+            ctx.fillStyle = 'rgba(0, 255, 136, 0.8)';
+            const textMetrics = ctx.measureText(label);
+            ctx.fillRect(x, y - 30, textMetrics.width + 10, 25);
+            
+            // Draw text
+            ctx.fillStyle = '#000';
+            ctx.font = '16px Arial';
+            ctx.fillText(label, x + 5, y - 10);
+        });
+        
+        ctx.restore();
+        
+        // Update overlay canvas
+        this.updateOverlay();
+    }
+
+    updateOverlay() {
+        // Create or update the detection overlay
+        let overlay = document.getElementById('detectionOverlay');
+        if (!overlay) {
+            overlay = document.createElement('canvas');
+            overlay.id = 'detectionOverlay';
+            overlay.style.position = 'absolute';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.pointerEvents = 'none';
+            overlay.style.zIndex = '5';
+            document.querySelector('.app-container').appendChild(overlay);
+        }
+        
+        const container = document.querySelector('.app-container');
+        const containerRect = container.getBoundingClientRect();
+        
+        overlay.width = containerRect.width;
+        overlay.height = containerRect.height;
+        
+        const ctx = overlay.getContext('2d');
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        
+        const scaleX = overlay.width / this.video.videoWidth;
+        const scaleY = overlay.height / this.video.videoHeight;
+        
+        ctx.strokeStyle = '#00ff88';
+        ctx.fillStyle = '#00ff88';
+        ctx.lineWidth = 2;
+        ctx.font = '14px Arial';
+        
+        this.detections.forEach(detection => {
+            const [x, y, width, height] = detection.bbox;
+            
+            const scaledX = overlay.width - ((x + width) * scaleX);
+            const scaledY = y * scaleY;
+            const scaledWidth = width * scaleX;
+            const scaledHeight = height * scaleY;
+            
+            // Draw box
+            ctx.strokeRect(scaledX, scaledY, scaledWidth, scaledHeight);
+            
+            // Draw label with background
+            const label = `${detection.class} ${Math.round(detection.score * 100)}%`;
+            const textMetrics = ctx.measureText(label);
+            const textWidth = textMetrics.width + 10;
+            const textHeight = 20;
+            
+            ctx.fillStyle = 'rgba(0, 255, 136, 0.9)';
+            ctx.fillRect(scaledX, scaledY - textHeight, textWidth, textHeight);
+            
+            ctx.fillStyle = '#000';
+            ctx.fillText(label, scaledX + 5, scaledY - 5);
+        });
     }
 
     async setupCamera() {
@@ -22,8 +160,8 @@ class MagnifyAI {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: 'environment',
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
+                    width: { ideal: 640 }, // Reduced for better performance
+                    height: { ideal: 480 }
                 }
             });
             this.video.srcObject = stream;
@@ -31,6 +169,8 @@ class MagnifyAI {
             this.video.addEventListener('loadedmetadata', () => {
                 this.canvas.width = this.video.videoWidth;
                 this.canvas.height = this.video.videoHeight;
+                this.detectionCanvas.width = this.video.videoWidth;
+                this.detectionCanvas.height = this.video.videoHeight;
             });
         } catch (error) {
             console.error('Error accessing camera:', error);
