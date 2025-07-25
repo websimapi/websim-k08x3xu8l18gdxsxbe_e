@@ -70,8 +70,10 @@ class MagnifyAI {
         ctx.scale(-1, 1);
         ctx.translate(-canvas.width, 0);
         
-        // Draw bounding boxes and labels
+        // Draw bounding boxes and labels - only for 90%+ confidence
         this.detections.forEach(detection => {
+            if (detection.score < 0.9) return; // Skip if confidence < 90%
+            
             const [x, y, width, height] = detection.bbox;
             const label = `${detection.class} ${Math.round(detection.score * 100)}%`;
             
@@ -131,6 +133,8 @@ class MagnifyAI {
         ctx.font = '14px Arial';
         
         this.detections.forEach(detection => {
+            if (detection.score < 0.9) return; // Skip if confidence < 90%
+            
             const [x, y, width, height] = detection.bbox;
             
             const scaledX = overlay.width - ((x + width) * scaleX);
