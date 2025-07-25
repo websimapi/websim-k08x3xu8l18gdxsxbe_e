@@ -1,3 +1,5 @@
+import { pipeline } from '@xenova/transformers';
+
 class MagnifyAI {
     constructor() {
         this.video = document.getElementById('camera');
@@ -7,7 +9,7 @@ class MagnifyAI {
         this.magnifiedImage = document.getElementById('magnifiedImage');
         this.zoomLevel = 1;
         this.flashOn = false;
-        this.model = null;
+        this.detector = null;
         this.detections = [];
         this.isDetecting = false;
         this.detectionCanvas = document.createElement('canvas');
@@ -26,72 +28,54 @@ class MagnifyAI {
 
     async loadModel() {
         try {
-            // Load MediaPipe Object Detection model
-            const vision = await FilesetResolver.forVisionTasks(
-                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-            );
-            
-            this.objectDetector = await ObjectDetector.createFromOptions(vision, {
-                baseOptions: {
-                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float16/1/object_detector.tflite",
-                    delegate: "GPU"
+            console.log('Loading Hugging Face Transformers.js model...');
+            document.querySelector('#loadingOverlay p').textContent = 'Loading AI Model...';
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+
+            this.detector = await pipeline('object-detection', 'Xenova/detr-resnet-50', {
+                quantized: true, // Use a quantized model for better performance
+                progress_callback: (data) => {
+                    if (data.status === 'progress') {
+                         const progress = (data.progress || 0).toFixed(2);
+                         document.querySelector('#loadingOverlay p').textContent = `Loading Model: ${progress}%`;
+                    }
                 },
-                runningMode: "IMAGE",
-                scoreThreshold: 0.7, // Reduced from 0.9 to 0.7
-                maxResults: 10
             });
-            
-            console.log('MediaPipe Object Detection model loaded');
+            console.log('Object detection model loaded');
         } catch (error) {
             console.error('Error loading model:', error);
-            // Fallback to COCO-SSD if MediaPipe fails
-            try {
-                this.model = await cocoSsd.load();
-                console.log('COCO-SSD fallback loaded');
-            } catch (fallbackError) {
-                console.error('Both models failed to load:', fallbackError);
-            }
+            alert('Failed to load AI model. Object detection will not be available.');
+        } finally {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            document.querySelector('#loadingOverlay p').textContent = 'Analyzing with AI...';
         }
     }
 
     startDetection() {
         const detect = async () => {
-            if (!this.objectDetector && !this.model) {
+            if (!this.detector || this.isDetecting || document.hidden) {
                 requestAnimationFrame(detect);
                 return;
             }
 
-            if (!this.isDetecting) {
-                this.isDetecting = true;
-                try {
-                    let predictions = [];
-                    
-                    if (this.objectDetector) {
-                        // Use MediaPipe
-                        const results = await this.objectDetector.detect(this.video);
-                        predictions = results.detections.map(detection => ({
-                            bbox: [
-                                detection.boundingBox.originX,
-                                detection.boundingBox.originY,
-                                detection.boundingBox.width,
-                                detection.boundingBox.height
-                            ],
-                            class: detection.categories[0].categoryName,
-                            score: detection.categories[0].score
-                        }));
-                    } else {
-                        // Fallback to COCO-SSD
-                        const results = await this.model.detect(this.video);
-                        predictions = results.filter(r => r.score >= 0.7); // Reduced threshold
-                    }
-                    
-                    this.detections = predictions;
-                    this.drawDetections();
-                } catch (error) {
-                    console.error('Detection error:', error);
-                } finally {
-                    this.isDetecting = false;
-                }
+            this.isDetecting = true;
+            try {
+                const predictions = await this.detector(this.video, {
+                    threshold: 0.8,
+                    percentage: true,
+                });
+                
+                this.detections = predictions.map(({ score, label, box }) => ({
+                    score,
+                    class: label,
+                    bbox: [box.xmin, box.ymin, box.xmax - box.xmin, box.ymax - box.ymin],
+                }));
+
+                this.drawDetections();
+            } catch (error) {
+                console.error('Detection error:', error);
+            } finally {
+                this.isDetecting = false;
             }
             requestAnimationFrame(detect);
         };
@@ -100,14 +84,6 @@ class MagnifyAI {
     }
 
     drawDetections() {
-        const canvas = this.detectionCanvas;
-        const ctx = this.detectionCtx;
-        
-        canvas.width = this.video.videoWidth;
-        canvas.height = this.video.videoHeight;
-        
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
         this.updateOverlay();
     }
 
@@ -117,13 +93,6 @@ class MagnifyAI {
         if (!overlay) {
             overlay = document.createElement('canvas');
             overlay.id = 'detectionOverlay';
-            overlay.style.position = 'absolute';
-            overlay.style.top = '0';
-            overlay.style.left = '0';
-            overlay.style.width = '100%';
-            overlay.style.height = '100%';
-            overlay.style.pointerEvents = 'none';
-            overlay.style.zIndex = '5';
             document.querySelector('.app-container').appendChild(overlay);
         }
         
@@ -136,22 +105,30 @@ class MagnifyAI {
         const ctx = overlay.getContext('2d');
         ctx.clearRect(0, 0, overlay.width, overlay.height);
         
-        const scaleX = overlay.width / this.video.videoWidth;
-        const scaleY = overlay.height / this.video.videoHeight;
-        
+        // Match video aspect ratio to avoid distortion
+        const videoAspectRatio = this.video.videoWidth / this.video.videoHeight;
+        const overlayAspectRatio = overlay.width / overlay.height;
+        let scaleX, scaleY, offsetX = 0, offsetY = 0;
+
+        if (overlayAspectRatio > videoAspectRatio) { // Letterboxed (black bars on sides)
+            scaleY = overlay.height;
+            scaleX = scaleY * videoAspectRatio;
+            offsetX = (overlay.width - scaleX) / 2;
+        } else { // Pillarboxed (black bars on top/bottom)
+            scaleX = overlay.width;
+            scaleY = scaleX / videoAspectRatio;
+            offsetY = (overlay.height - scaleY) / 2;
+        }
+
         ctx.strokeStyle = '#00ff88';
-        ctx.fillStyle = '#00ff88';
         ctx.lineWidth = 2;
         ctx.font = '14px Arial';
         
         this.detections.forEach(detection => {
-            if (detection.score < 0.7) return; // Reduced threshold
-            
             const [x, y, width, height] = detection.bbox;
             
-            // Fixed the flipped coordinate calculation
-            const scaledX = x * scaleX;
-            const scaledY = y * scaleY;
+            const scaledX = x * scaleX + offsetX;
+            const scaledY = y * scaleY + offsetY;
             const scaledWidth = width * scaleX;
             const scaledHeight = height * scaleY;
             
@@ -165,10 +142,10 @@ class MagnifyAI {
             const textHeight = 20;
             
             ctx.fillStyle = 'rgba(0, 255, 136, 0.9)';
-            ctx.fillRect(scaledX, scaledY - textHeight, textWidth, textHeight);
+            ctx.fillRect(scaledX, scaledY - textHeight > 0 ? scaledY - textHeight : scaledY, textWidth, textHeight);
             
             ctx.fillStyle = '#000';
-            ctx.fillText(label, scaledX + 5, scaledY - 5);
+            ctx.fillText(label, scaledX + 5, scaledY - textHeight > 0 ? scaledY - 5 : scaledY + 15);
         });
     }
 
@@ -219,8 +196,7 @@ class MagnifyAI {
     }
 
     applyZoom() {
-        // Apply zoom using CSS transform
-        this.video.style.transform = `scaleX(-1) scale(${this.zoomLevel})`;
+        this.video.style.transform = `scale(${this.zoomLevel})`;
     }
 
     setupGestures() {
