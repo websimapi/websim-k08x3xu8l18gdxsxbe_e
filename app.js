@@ -37,7 +37,7 @@ class MagnifyAI {
                     delegate: "GPU"
                 },
                 runningMode: "IMAGE",
-                scoreThreshold: 0.9, // 90% threshold
+                scoreThreshold: 0.7, // Reduced from 0.9 to 0.7
                 maxResults: 10
             });
             
@@ -82,7 +82,7 @@ class MagnifyAI {
                     } else {
                         // Fallback to COCO-SSD
                         const results = await this.model.detect(this.video);
-                        predictions = results.filter(r => r.score >= 0.9);
+                        predictions = results.filter(r => r.score >= 0.7); // Reduced threshold
                     }
                     
                     this.detections = predictions;
@@ -145,11 +145,12 @@ class MagnifyAI {
         ctx.font = '14px Arial';
         
         this.detections.forEach(detection => {
-            if (detection.score < 0.9) return; // Skip if confidence < 90%
+            if (detection.score < 0.7) return; // Reduced threshold
             
             const [x, y, width, height] = detection.bbox;
             
-            const scaledX = overlay.width - ((x + width) * scaleX);
+            // Fixed the flipped coordinate calculation
+            const scaledX = x * scaleX;
             const scaledY = y * scaleY;
             const scaledWidth = width * scaleX;
             const scaledHeight = height * scaleY;
